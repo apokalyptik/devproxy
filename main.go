@@ -16,14 +16,14 @@ import (
 var verbose int
 var hostNameRewrite map[string]string
 
-type ConnectionRequestPartOneSocks5 struct {
+type connectionRequestPartOneSocks5 struct {
 	Version     uint8
 	Command     uint8
 	Null2       uint8
 	AddressType uint8
 }
 
-type ConnectionRequestResponseSocks5 struct {
+type connectionRequestResponseSocks5 struct {
 	Version     uint8
 	Status      uint8
 	Null        uint8
@@ -33,30 +33,30 @@ type ConnectionRequestResponseSocks5 struct {
 }
 
 const (
-	CONNECT_TIMEOUT   = 30 * time.Second
-	ECHO_BUFFER_BYTES = 1024
+	connectTimeout  = 30 * time.Second
+	echoBufferBytes = 1024
 )
 
-func echoLoop(to_read net.Conn, to_write net.Conn, wg *sync.WaitGroup) {
-	var buffer [ECHO_BUFFER_BYTES]byte
+func echoLoop(toRead net.Conn, toWrite net.Conn, wg *sync.WaitGroup) {
+	var buffer [echoBufferBytes]byte
 	for {
-		n, err := to_read.Read(buffer[0:])
+		n, err := toRead.Read(buffer[0:])
 		if err != nil {
 			break
 		}
 		if verbose >= 3 {
 			log.Printf("%s", string(buffer[0:]))
 		}
-		_, err = to_write.Write(buffer[0:n])
+		_, err = toWrite.Write(buffer[0:n])
 		if err != nil {
 			break
 		}
 	}
-	to_write.Close()
+	toWrite.Close()
 	wg.Done()
 }
 
-func WriteConnectionResponseSocks5(client net.Conn, response ConnectionRequestResponseSocks5) error {
+func writeConnectionResponseSocks5(client net.Conn, response connectionRequestResponseSocks5) error {
 	if err := binary.Write(client, binary.BigEndian, response); err != nil {
 		log.Printf("binary.Write failed: %+v [%T]", err, response)
 		return err
@@ -64,8 +64,8 @@ func WriteConnectionResponseSocks5(client net.Conn, response ConnectionRequestRe
 	return nil
 }
 
-func resolveServerSocks5(client net.Conn, request ConnectionRequestPartOneSocks5) (net.IP, []byte, uint8, []byte, error) {
-	var server_ip net.IP
+func resolveServerSocks5(client net.Conn, request connectionRequestPartOneSocks5) (net.IP, []byte, uint8, []byte, error) {
+	var serverIP net.IP
 	var address []byte
 	var dnsLength uint8
 	var rewritten bool
@@ -74,79 +74,79 @@ func resolveServerSocks5(client net.Conn, request ConnectionRequestPartOneSocks5
 		// IPv4
 		address = make([]byte, 4)
 		if err := binary.Read(client, binary.BigEndian, &address); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
 		if err := binary.Read(client, binary.BigEndian, &port); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
-		server_ip = net.IP(address[0:])
+		serverIP = net.IP(address[0:])
 	} else if request.AddressType == 3 {
 		// DNS
 		if err := binary.Read(client, binary.BigEndian, &dnsLength); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
 		address = make([]byte, dnsLength)
 		if err := binary.Read(client, binary.BigEndian, &address); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
 		if err := binary.Read(client, binary.BigEndian, &port); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
 		v, e := hostNameRewrite[string(address[0:])]
 		if e {
 			ips, err := net.LookupIP(v)
 			if err != nil {
-				return server_ip, address, dnsLength, port, err
+				return serverIP, address, dnsLength, port, err
 			}
 			if verbose >= 2 {
 				log.Printf("Found IPS for %s: %+v", v, ips)
 			}
-			server_ip = ips[0]
+			serverIP = ips[0]
 			rewritten = true
 		} else {
 			ips, err := net.LookupIP(string(address[0:]))
 			if err != nil {
-				return server_ip, address, dnsLength, port, err
+				return serverIP, address, dnsLength, port, err
 			}
 			if verbose >= 2 {
 				log.Printf("Found IPS for %s: %+v", string(address[0:]), ips)
 			}
-			server_ip = ips[0]
+			serverIP = ips[0]
 		}
 		// TODO randomize
 	} else if request.AddressType == 4 {
 		// IPv6
 		address = make([]byte, 16)
 		if err := binary.Read(client, binary.BigEndian, &address); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
 		if err := binary.Read(client, binary.BigEndian, &port); err != nil {
-			return server_ip, address, dnsLength, port, err
+			return serverIP, address, dnsLength, port, err
 		}
-		server_ip = net.IP(address[0:])
+		serverIP = net.IP(address[0:])
 	} else {
-		return server_ip, address, dnsLength, port, errors.New(fmt.Sprintf("Invalid address type requested by client: %x", request.AddressType))
+		return serverIP, address, dnsLength, port, fmt.Errorf("Invalid address type requested by client: %x", request.AddressType)
 	}
 	if verbose >= 2 {
 		if request.AddressType == 3 {
 			if rewritten {
-				log.Printf("%s requested %+v. Rewriting IP address %s", client.RemoteAddr(), string(address), server_ip)
+				log.Printf("%s requested %+v. Rewriting IP address %s", client.RemoteAddr(), string(address), serverIP)
 			} else {
-				log.Printf("%s requested %+v. Using IP address %s", client.RemoteAddr(), string(address), server_ip)
+				log.Printf("%s requested %+v. Using IP address %s", client.RemoteAddr(), string(address), serverIP)
 			}
 		} else {
-			log.Printf("%s requested %+v", client.RemoteAddr(), server_ip)
+			log.Printf("%s requested %+v", client.RemoteAddr(), serverIP)
 		}
 	}
-	return server_ip, address, dnsLength, port, nil
+	return serverIP, address, dnsLength, port, nil
 }
 
 func handleSocks5(client net.Conn) error {
 	var authMethodCount uint8
 	var authMethods []uint8
 	var authCanNoAuth bool
-	var server_ip net.IP
-	var server_addr string
+	var serverIP net.IP
+	var serverAddr string
 	var Err error
 	port := make([]byte, 2)
 	if err := binary.Read(client, binary.BigEndian, &authMethodCount); err != nil {
@@ -168,34 +168,34 @@ func handleSocks5(client net.Conn) error {
 		return err
 	}
 
-	request := ConnectionRequestPartOneSocks5{}
+	request := connectionRequestPartOneSocks5{}
 	if err := binary.Read(client, binary.BigEndian, &request); err != nil {
 		return err
 	}
-	if server_ip, _, _, port, Err = resolveServerSocks5(client, request); Err != nil {
+	if serverIP, _, _, port, Err = resolveServerSocks5(client, request); Err != nil {
 		return Err
 	}
 
 	portInt := binary.BigEndian.Uint16(port)
-	isV4 := server_ip.To4()
+	isV4 := serverIP.To4()
 	if isV4 != nil {
-		server_addr = fmt.Sprintf("%s:%d", server_ip, portInt)
+		serverAddr = fmt.Sprintf("%s:%d", serverIP, portInt)
 	} else {
-		server_addr = fmt.Sprintf("[%s]:%d", server_ip, portInt)
+		serverAddr = fmt.Sprintf("[%s]:%d", serverIP, portInt)
 	}
 
-	response := ConnectionRequestResponseSocks5{}
+	response := connectionRequestResponseSocks5{}
 	response.Version = 5
 	response.Status = 0
 	response.AddressType = 1
 
-	server, err := net.DialTimeout("tcp", server_addr, CONNECT_TIMEOUT)
+	server, err := net.DialTimeout("tcp", serverAddr, connectTimeout)
 	if err != nil {
 		// General Failure
 		response.Status = 1
 	}
 
-	if err := WriteConnectionResponseSocks5(client, response); err != nil {
+	if err := writeConnectionResponseSocks5(client, response); err != nil {
 		return err
 	}
 
@@ -230,11 +230,11 @@ func handleConnection(client net.Conn) error {
 
 func main() {
 
-	var listen_address string
+	var listenAddress string
 	var rewrite string
 
 	flag.IntVar(&verbose, "verbose", 0, "Verbosity level (0: off, 1: some, 2: everything)")
-	flag.StringVar(&listen_address, "listen", "127.0.0.1:8888", "ip:port string on which the proxy should listen")
+	flag.StringVar(&listenAddress, "listen", "127.0.0.1:8888", "ip:port string on which the proxy should listen")
 	flag.StringVar(&rewrite, "rewrite", "", "hostfrom1:hostto1[,hostfrom2:hostto2[...]]")
 
 	flag.Parse()
@@ -255,13 +255,13 @@ func main() {
 		log.Printf("Rewrite Rules: %+v", hostNameRewrite)
 	}
 
-	listener, err := net.Listen("tcp", listen_address)
+	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Could not listen on", listen_address)
+		fmt.Fprintln(os.Stderr, "Could not listen on", listenAddress)
 		os.Exit(1)
 	}
 	if verbose >= 1 {
-		log.Printf("Socks5 Proxy Listening on %s", listen_address)
+		log.Printf("Socks5 Proxy Listening on %s", listenAddress)
 	}
 	for {
 		conn, err := listener.Accept()
